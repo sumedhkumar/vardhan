@@ -1,0 +1,370 @@
+//@version=5
+strategy("LuxAlgo Hybrid Gold Scalper v3", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=2, initial_capital=10000, commission_type=strategy.commission.cash_per_order, commission_value=0.5, slippage=3, calc_on_every_tick=false, process_orders_on_close=true)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Structure
+swingLen       = input.int(10, "Swing Length", minval=3, maxval=20, group="Structure")
+
+// Trend
+emaFast        = input.int(9, "Fast EMA", group="Trend")
+emaSlow        = input.int(21, "Slow EMA", group="Trend")
+emaTrend       = input.int(50, "Trend EMA (Filter)", group="Trend")
+ema200         = input.int(200, "Bias EMA", group="Trend")
+
+// Momentum
+rsiLen         = input.int(14, "RSI Length", group="Momentum")
+adxLen         = input.int(14, "ADX Length", group="Momentum")
+adxThresh      = input.int(25, "ADX Threshold (min trend strength)", group="Momentum")
+
+// Volatility
+atrLen         = input.int(14, "ATR Length", group="Volatility")
+atrSlMult      = input.float(2.5, "SL ATR Multiplier", minval=1.0, step=0.25, group="Volatility")
+atrTp1Mult     = input.float(1.5, "TP1 ATR Multiplier", minval=0.5, step=0.25, group="Volatility")
+atrTp2Mult     = input.float(3.5, "TP2 ATR Multiplier", minval=1.0, step=0.5, group="Volatility")
+trailMult      = input.float(2.0, "Trailing Stop ATR Mult", minval=0.5, step=0.1, group="Volatility")
+
+// Session
+useSession     = input.bool(true, "Session Filter", group="Session")
+sessionStart   = input.int(7, "Session Start Hour (UTC)", group="Session")
+sessionEnd     = input.int(17, "Session End Hour (UTC)", group="Session")
+
+// Risk
+maxTradesDay   = input.int(4, "Max Trades Per Day", minval=1, maxval=20, group="Risk")
+cooldownBars   = input.int(10, "Cooldown After Entry (bars)", minval=1, maxval=30, group="Risk")
+useBreakeven   = input.bool(true, "Move SL to Breakeven after TP1", group="Risk")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CORE CALCULATIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+atr = ta.atr(atrLen)
+
+// --- EMAs & Trend ---
+emaF = ta.ema(close, emaFast)
+emaS = ta.ema(close, emaSlow)
+emaT = ta.ema(close, emaTrend)
+ema2 = ta.ema(close, ema200)
+
+trendUp = emaF > emaS and emaS > emaT and close > ema2
+trendDn = emaF < emaS and emaS < emaT and close < ema2
+
+// --- RSI ---
+rsi = ta.rsi(close, rsiLen)
+
+// --- ADX (trend strength filter) ---
+[diPlus, diMinus, adxVal] = ta.dmi(adxLen, adxLen)
+strongTrend = adxVal > adxThresh
+
+// --- VWAP (intraday anchor) ---
+vwapVal = ta.vwap(hlc3)
+
+// --- Swing Points ---
+swH = ta.pivothigh(high, swingLen, swingLen)
+swL = ta.pivotlow(low, swingLen, swingLen)
+
+var float lastHigh = na
+var float lastLow = na
+var float prev2High = na
+var float prev2Low = na
+
+if not na(swH)
+    prev2High := lastHigh
+    lastHigh := swH
+if not na(swL)
+    prev2Low := lastLow
+    lastLow := swL
+
+// --- Market Structure ---
+var int structure = 0
+
+bullBreak = not na(lastHigh) and close > lastHigh
+bearBreak = not na(lastLow) and close < lastLow
+
+if bullBreak
+    structure := 1
+if bearBreak
+    structure := -1
+
+// --- Change of Character (Reversal) ---
+bullCHoCH = bearBreak[1] == false and bullBreak and structure[1] == -1
+bearCHoCH = bullBreak[1] == false and bearBreak and structure[1] == 1
+
+// --- Fair Value Gap ---
+bullFVG = low > high[2]
+bearFVG = high < low[2]
+
+var float lastBullFVGtop = na
+var float lastBullFVGbot = na
+var float lastBearFVGtop = na
+var float lastBearFVGbot = na
+var int bullFVGbar = na
+var int bearFVGbar = na
+
+if bullFVG
+    lastBullFVGtop := low
+    lastBullFVGbot := high[2]
+    bullFVGbar := bar_index
+
+if bearFVG
+    lastBearFVGtop := low[2]
+    lastBearFVGbot := high
+    bearFVGbar := bar_index
+
+priceInBullFVG = not na(lastBullFVGbot) and bar_index - nz(bullFVGbar) < 20 and low <= lastBullFVGtop and close >= lastBullFVGbot
+priceInBearFVG = not na(lastBearFVGbot) and bar_index - nz(bearFVGbar) < 20 and high >= lastBearFVGbot and close <= lastBearFVGtop
+
+// --- Order Block Detection ---
+var float bullOBhi = na
+var float bullOBlo = na
+var float bearOBhi = na
+var float bearOBlo = na
+var int bullOBbar = na
+var int bearOBbar = na
+
+if bullBreak and structure[1] != 1
+    for i = 1 to 15
+        if close[i] < open[i]
+            bullOBhi := high[i]
+            bullOBlo := low[i]
+            bullOBbar := bar_index
+            break
+
+if bearBreak and structure[1] != -1
+    for i = 1 to 15
+        if close[i] > open[i]
+            bearOBhi := high[i]
+            bearOBlo := low[i]
+            bearOBbar := bar_index
+            break
+
+priceInBullOB = not na(bullOBlo) and bar_index - nz(bullOBbar) < 30 and low <= bullOBhi and close >= bullOBlo
+priceInBearOB = not na(bearOBlo) and bar_index - nz(bearOBbar) < 30 and high >= bearOBlo and close <= bearOBhi
+
+// --- Liquidity Sweep ---
+bullSweep = not na(lastLow) and not na(prev2Low) and low < math.min(lastLow, nz(prev2Low)) and close > math.min(lastLow, nz(prev2Low))
+bearSweep = not na(lastHigh) and not na(prev2High) and high > math.max(lastHigh, nz(prev2High)) and close < math.max(lastHigh, nz(prev2High))
+
+// --- Smart Trail ---
+var float trail = na
+var int trailDir = 0
+
+longTrail = close - atr * trailMult
+shortTrail = close + atr * trailMult
+
+if na(trail)
+    trail := close
+    trailDir := 1
+else if trailDir == 1
+    trail := math.max(trail, longTrail)
+    if close < trail
+        trail := shortTrail
+        trailDir := -1
+else
+    trail := math.min(trail, shortTrail)
+    if close > trail
+        trail := longTrail
+        trailDir := 1
+
+// --- Session Filter ---
+utcH = hour(time, "UTC")
+inSession = not useSession or (utcH >= sessionStart and utcH < sessionEnd)
+
+// --- Daily Trade Counter ---
+var int dailyTrades = 0
+newDay = ta.change(dayofweek) != 0
+if newDay
+    dailyTrades := 0
+
+// --- Cooldown ---
+var int lastEntryBar = 0
+canTrade = bar_index - lastEntryBar >= cooldownBars
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONFLUENCE SCORING — Quality over quantity
+// ═══════════════════════════════════════════════════════════════════════════════
+
+longScore = 0
+longScore += structure == 1 ? 2 : 0
+longScore += trendUp ? 2 : 0
+longScore += strongTrend ? 1 : 0
+longScore += priceInBullFVG ? 2 : 0
+longScore += priceInBullOB ? 2 : 0
+longScore += bullSweep ? 2 : 0
+longScore += (close > vwapVal) ? 1 : 0
+longScore += bullCHoCH ? 1 : 0
+
+shortScore = 0
+shortScore += structure == -1 ? 2 : 0
+shortScore += trendDn ? 2 : 0
+shortScore += strongTrend ? 1 : 0
+shortScore += priceInBearFVG ? 2 : 0
+shortScore += priceInBearOB ? 2 : 0
+shortScore += bearSweep ? 2 : 0
+shortScore += (close < vwapVal) ? 1 : 0
+shortScore += bearCHoCH ? 1 : 0
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENTRY CONDITIONS — Minimum 7/13 confluence required
+// ═══════════════════════════════════════════════════════════════════════════════
+
+minScore = 7
+
+longTrigger = (rsi > 40 and rsi < 70) and trailDir == 1 and close > emaF
+shortTrigger = (rsi < 60 and rsi > 30) and trailDir == -1 and close < emaF
+
+goLong = longScore >= minScore and longTrigger and inSession and canTrade and dailyTrades < maxTradesDay and strategy.position_size == 0
+goShort = shortScore >= minScore and shortTrigger and inSession and canTrade and dailyTrades < maxTradesDay and strategy.position_size == 0
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DYNAMIC TP/SL — Wide SL, Partial TP, Breakeven, Trail Runner
+// ═══════════════════════════════════════════════════════════════════════════════
+
+float slDist = atr * atrSlMult
+float tp1Dist = atr * atrTp1Mult
+float tp2Dist = atr * atrTp2Mult
+
+// Minimum distances for gold (prevents too-tight stops during low vol)
+slDist := math.max(slDist, 4.0)
+tp1Dist := math.max(tp1Dist, 3.0)
+tp2Dist := math.max(tp2Dist, 8.0)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// POSITION TRACKING & BREAKEVEN LOGIC
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var float entryPrice = na
+var float currentSL = na
+var bool tp1Hit = false
+
+if goLong or goShort
+    entryPrice := close
+    tp1Hit := false
+    if goLong
+        currentSL := close - slDist
+    else
+        currentSL := close + slDist
+
+// Detect TP1 hit for breakeven
+if strategy.position_size > 0 and not tp1Hit
+    if high >= entryPrice + tp1Dist
+        tp1Hit := true
+        if useBreakeven
+            currentSL := entryPrice + 1.0
+
+if strategy.position_size < 0 and not tp1Hit
+    if low <= entryPrice - tp1Dist
+        tp1Hit := true
+        if useBreakeven
+            currentSL := entryPrice - 1.0
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STRATEGY EXECUTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if goLong
+    lastEntryBar := bar_index
+    dailyTrades += 1
+    slPrice = close - slDist
+    tp1 = close + tp1Dist
+    tp2 = close + tp2Dist
+    strategy.entry("Long", strategy.long)
+    strategy.exit("TP1L", "Long", qty_percent=50, limit=tp1, stop=slPrice)
+    strategy.exit("TP2L", "Long", limit=tp2, stop=slPrice)
+
+if goShort
+    lastEntryBar := bar_index
+    dailyTrades += 1
+    slPrice = close + slDist
+    tp1 = close - tp1Dist
+    tp2 = close - tp2Dist
+    strategy.entry("Short", strategy.short)
+    strategy.exit("TP1S", "Short", qty_percent=50, limit=tp1, stop=slPrice)
+    strategy.exit("TP2S", "Short", limit=tp2, stop=slPrice)
+
+// --- Breakeven SL update (re-issue exit with new stop) ---
+if strategy.position_size > 0 and tp1Hit and useBreakeven
+    tp2 = entryPrice + tp2Dist
+    strategy.exit("TP2L", "Long", limit=tp2, stop=currentSL)
+
+if strategy.position_size < 0 and tp1Hit and useBreakeven
+    tp2 = entryPrice - tp2Dist
+    strategy.exit("TP2S", "Short", limit=tp2, stop=currentSL)
+
+// --- Trail Exit for remaining position after TP1 ---
+if strategy.position_size > 0 and tp1Hit and close < trail
+    strategy.close("Long", comment="Trail")
+if strategy.position_size < 0 and tp1Hit and close > trail
+    strategy.close("Short", comment="Trail")
+
+// --- Opposite structure break exit ---
+if strategy.position_size > 0 and structure == -1
+    strategy.close("Long", comment="Structure Flip")
+if strategy.position_size < 0 and structure == 1
+    strategy.close("Short", comment="Structure Flip")
+
+// --- End of session close ---
+if strategy.position_size != 0 and useSession and utcH >= sessionEnd
+    strategy.close_all(comment="Session End")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VISUALS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Smart Trail
+plot(trail, "Smart Trail", color=trailDir == 1 ? color.new(color.teal, 20) : color.new(color.red, 20), linewidth=2, style=plot.style_linebr)
+
+// EMAs
+plot(emaF, "EMA 9", color=color.new(color.blue, 50))
+plot(emaS, "EMA 21", color=color.new(color.orange, 50))
+plot(emaT, "EMA 50", color=color.new(color.gray, 60), linewidth=2)
+plot(ema2, "EMA 200", color=color.new(color.yellow, 70), linewidth=2)
+
+// VWAP
+plot(vwapVal, "VWAP", color=color.new(color.purple, 40), style=plot.style_circles)
+
+// Entry signals
+plotshape(goLong, "BUY", shape.labelup, location.belowbar, color.new(color.lime, 0), text="BUY", textcolor=color.white, size=size.small)
+plotshape(goShort, "SELL", shape.labeldown, location.abovebar, color.new(color.red, 0), text="SELL", textcolor=color.white, size=size.small)
+
+// Structure
+plotshape(bullCHoCH, "Bull CHoCH", shape.diamond, location.belowbar, color.new(color.aqua, 0), size=size.tiny)
+plotshape(bearCHoCH, "Bear CHoCH", shape.diamond, location.abovebar, color.new(color.fuchsia, 0), size=size.tiny)
+
+// FVG zones
+bgcolor(priceInBullFVG ? color.new(color.green, 92) : na)
+bgcolor(priceInBearFVG ? color.new(color.red, 92) : na)
+
+// Trend background
+bgcolor(trendUp and strongTrend ? color.new(color.green, 95) : trendDn and strongTrend ? color.new(color.red, 95) : na)
+
+// Confluence score display
+plot(longScore, "Long Score", display=display.data_window, color=color.green)
+plot(shortScore, "Short Score", display=display.data_window, color=color.red)
+
+// Info Table
+var table infoTbl = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 70), border_width=1)
+if barstate.islast
+    table.cell(infoTbl, 0, 0, "Structure", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 0, structure == 1 ? "BULLISH" : "BEARISH", text_color=structure == 1 ? color.lime : color.red, text_size=size.small)
+    table.cell(infoTbl, 0, 1, "ADX", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 1, str.tostring(adxVal, "#.#"), text_color=strongTrend ? color.lime : color.gray, text_size=size.small)
+    table.cell(infoTbl, 0, 2, "RSI", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 2, str.tostring(rsi, "#.#"), text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 0, 3, "ATR", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 3, "$" + str.tostring(atr, "#.##"), text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 0, 4, "Session", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 4, inSession ? "ACTIVE" : "OFF", text_color=inSession ? color.lime : color.gray, text_size=size.small)
+    table.cell(infoTbl, 0, 5, "Trades Today", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 5, str.tostring(dailyTrades) + "/" + str.tostring(maxTradesDay), text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 0, 6, "Confluence", text_color=color.white, text_size=size.small)
+    table.cell(infoTbl, 1, 6, "L:" + str.tostring(longScore) + " S:" + str.tostring(shortScore), text_color=color.yellow, text_size=size.small)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+alertcondition(goLong, "BUY Signal", "GOLD BUY | Confluence: " + str.tostring(longScore) + "/13")
+alertcondition(goShort, "SELL Signal", "GOLD SELL | Confluence: " + str.tostring(shortScore) + "/13")

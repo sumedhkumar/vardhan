@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trading View Pro</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
+</head>
+<body>
+  <header class="toolbar">
+    <div class="brand">
+      <span class="brand__dot"></span>
+      <span class="brand__name">Trading View Pro</span>
+    </div>
+
+    <div class="toolbar__group">
+      <label class="toolbar__label" for="pane-count">Number of charts</label>
+      <div class="seg" id="pane-count" role="radiogroup" aria-label="Number of charts">
+        <button type="button" class="seg__btn" data-count="1" role="radio" aria-checked="false">1</button>
+        <button type="button" class="seg__btn" data-count="2" role="radio" aria-checked="false">2</button>
+        <button type="button" class="seg__btn" data-count="4" role="radio" aria-checked="false">4</button>
+        <button type="button" class="seg__btn" data-count="6" role="radio" aria-checked="false">6</button>
+        <button type="button" class="seg__btn" data-count="8" role="radio" aria-checked="false">8</button>
+      </div>
+    </div>
+
+    <div class="toolbar__spacer"></div>
+
+    <div class="toolbar__group toolbar__group--status" aria-live="polite">
+      <span class="conn-pill" id="hl-conn-status" data-status="idle">
+        <span class="conn-pill__dot"></span>
+        <span class="conn-pill__label">Hyperliquid: idle</span>
+      </span>
+    </div>
+  </header>
+
+  <main class="grid" id="grid" data-count="4"></main>
+
+  <!-- Pane template cloned per chart pane. -->
+  <template id="pane-template">
+    <section class="pane">
+      <header class="pane__header">
+        <div class="pane__controls">
+          <select class="pane__source" aria-label="Data source">
+            <option value="hyperliquid">Hyperliquid</option>
+            <option value="yfinance">Stocks (NSE/BSE)</option>
+            <option value="forex">Forex</option>
+          </select>
+          <input
+            class="pane__symbol"
+            type="text"
+            spellcheck="false"
+            autocomplete="off"
+            aria-label="Symbol"
+            placeholder="Search symbol…"
+          />
+          <select class="pane__interval" aria-label="Timeframe">
+            {% for tf in intervals %}
+            <option value="{{ tf }}">{{ tf }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="pane__indicators" title="Indicators" aria-label="Indicators">ƒx</button>
+          <button type="button" class="pane__backtest"   title="Backtest"   aria-label="Backtest">▶</button>
+          <button type="button" class="pane__refresh"    title="Reload history" aria-label="Reload history">&#x21bb;</button>
+        </div>
+        <div class="pane__ticker" data-direction="flat">
+          <span class="pane__ticker-symbol"></span>
+          <span class="pane__ticker-price">—</span>
+          <span class="pane__ticker-change"></span>
+          <span class="pane__status" data-state="idle"></span>
+        </div>
+      </header>
+      <div class="pane__chart"></div>
+    </section>
+  </template>
+
+  <!--
+    Lightweight Charts v5: vendored copy first, CDN fallback if missing.
+    Run ``python _fetch_vendor.py`` to vendor it for offline operation.
+  -->
+  <script
+    src="{{ url_for('static', filename='vendor/lightweight-charts.standalone.production.js') }}"
+    onerror="var n=document.createElement('script');n.src='https://unpkg.com/lightweight-charts@5.0.7/dist/lightweight-charts.standalone.production.js';document.head.appendChild(n);"></script>
+
+  <!-- Data clients -->
+  <script src="{{ url_for('static', filename='js/yfinance.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/hyperliquid.js') }}"></script>
+
+  <!-- Indicator framework + bundled indicators (overlays + oscillators) -->
+  <script src="{{ url_for('static', filename='js/indicators/math.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/indicators/overlays.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/indicators/oscillators.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/indicators/index.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/ind_manager.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/ind_popover.js') }}"></script>
+
+  <!-- Strategies + backtest engine -->
+  <script src="{{ url_for('static', filename='js/strategies/all.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/backtest.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/backtest_panel.js') }}"></script>
+
+  <!-- UI components -->
+  <script src="{{ url_for('static', filename='js/autocomplete.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/pane.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

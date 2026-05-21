@@ -1,0 +1,5 @@
+{
+  "step": "import app",
+  "ok": false,
+  "traceback": "Traceback (most recent call last):\n  File \"c:\\Users\\Sumed\\OneDrive\\Documents\\trading_view_pro\\_smoke.py\", line 5, in <module>\n    import app\n  File \"c:\\Users\\Sumed\\OneDrive\\Documents\\trading_view_pro\\app.py\", line 16, in <module>\n    import data_source\n  File \"c:\\Users\\Sumed\\OneDrive\\Documents\\trading_view_pro\\data_source.py\", line 101, in <module>\n    import sources  # noqa: E402,F401\n    ^^^^^^^^^^^^^^\n  File \"c:\\Users\\Sumed\\OneDrive\\Documents\\trading_view_pro\\sources\\__init__.py\", line 8, in <module>\n    from . import yfinance_source  # noqa: F401  (side-effect: register)\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"c:\\Users\\Sumed\\OneDrive\\Documents\\trading_view_pro\\sources\\yfinance_source.py\", line 18, in <module>\n    import yfinance as yf\nModuleNotFoundError: No module named 'yfinance'\n"
+}

@@ -1,0 +1,5 @@
+flask>=3.0
+yfinance>=0.2.40
+pandas>=2.0
+requests>=2.31
+rapidfuzz>=3.6
